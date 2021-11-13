@@ -29,13 +29,11 @@ pthread_attr_t *attr;
      {                            \
        printf("Connection error: connection NULL\n"); \
      }                            \
-     printf("Exiting thread\n"); \
-     pthread_exit(NULL); \
+     printf("Exit\n"); pthread_exit(NULL);\
    }
 
 
-static redisContext *conn[MAX_THREAD];
-
+int connection_status;
 
 TAILQ_HEAD(tailhead, entry)
 head;
