@@ -24,7 +24,7 @@ void add_to_queue(int n)
         elem->num = n;
     }
     pthread_mutex_lock(&mutexQueue);
-    printf("Adding to queue: %d\n", elem->num);
+    // printf("Adding to queue: %d\n", elem->num);
     TAILQ_INSERT_TAIL(&head, elem, entries);
     pthread_cond_signal(&condQueue);
     pthread_mutex_unlock(&mutexQueue);
@@ -37,6 +37,7 @@ void *t_redis_command(void *args)
     Q_ENTRY *elem = NULL;
     int num = 0;
     int found = 0;
+    int retcode = 0;
     REDIS_CONN  *conn = args;
     redisContext *conn_t;
     redisReply *reply;
@@ -45,8 +46,11 @@ void *t_redis_command(void *args)
     
     
     conn_t = redisConnectUnixWithTimeout(unixname, timeout);
-    CHECK_CONN(conn_t);
-
+    CHECK_CONN(conn_t, retcode);
+    if(retcode == -1)
+    {
+      printf("Error in connection\n");
+    }
     // Get task from queue
     // execute task
     while(1)
@@ -54,12 +58,9 @@ void *t_redis_command(void *args)
         pthread_mutex_lock(&mutexQueue);
         if(TAILQ_EMPTY(&head))
         {
-          //printf("waiting thread\n");
           pthread_cond_wait(&condQueue, &mutexQueue);
-          // printf("job arrived thread\n");
         }
         printf("Job found on thread(%d) conn state: %d\n", conn->th_id, connection_status);
-        // assert(0);
         if(connection_status == 0)
         {
           printf("Redis disconnected\n");
@@ -75,24 +76,29 @@ void *t_redis_command(void *args)
             num = elem->num;
             free(elem);
         }
-
         pthread_mutex_unlock(&mutexQueue);
 
-        // execution will take 2 secs
         if (found)
         {  
-           // CHECK_CONN(conn_t);
            /* Try a GET and two INCR */
            redisAppendCommand(conn_t, "GET user%05d",num);
            if (redisGetReply(conn_t, (void **)&reply) == REDIS_OK) {
              printf("GET user%05d: %s\n", num, reply->str);
              freeReplyObject(reply);
-           } else {
-            CHECK_CONN(conn_t);
-            printf("Exit thread\n");
-            break; 
+           } 
+           else 
+           {
+             printf("Add job back to queue tail : %d\n",num);
+             add_to_queue(num);
+             CHECK_CONN(conn_t, retcode);
+             if(retcode == -1)
+             {
+               printf("Connection error detected\n");
+             }
+             printf("Exit thread\n");
+             break; 
            }
-           // usleep(100000);
+           usleep(100000);
            found = 0;
         }
     }
@@ -108,7 +114,7 @@ void * t_check_connection(void *args)
    redisContext *conn_t; 
    redisReply *reply;
    (args) = (args);   
-  
+   
    while(1)
    { 
      conn_t = redisConnectUnixWithTimeout(unixname, timeout);
@@ -122,7 +128,12 @@ void * t_check_connection(void *args)
           
          freeReplyObject(reply);
          printf("connected..\n");
-         connection_status = 1;
+         if(connection_status == 0)
+         {
+           connection_status = 1;
+           printf("Spin thread pool as redis connected\n");
+           create_thread_pool(MAX_THREAD);
+         }
        } else {
          if(conn_t)
          {
@@ -144,7 +155,22 @@ void * t_check_connection(void *args)
    pthread_exit(NULL);
    return NULL;
 }
-
+void create_thread_pool(int max_thread)
+{
+    int i;
+    
+    printf("Create thread pool of %d threads\n", max_thread);
+    for (i = 0; i < max_thread; i++)
+    {
+        redis_conn[i].th_id = i;
+        if (pthread_create(&redis_conn[i].t_conn, attr, t_redis_command, &redis_conn[i]) != 0)
+        {
+            printf("Error creating threads \n");
+            exit(0);
+        }
+        printf("Created thread(%d): %lu\n",i, redis_conn[i].t_conn);
+    }
+}
 
 int main(int argc, char *argv[])
 {
@@ -157,8 +183,6 @@ int main(int argc, char *argv[])
     if(argc >= 2)
       queue_num = atoi(argv[1]); 
 
-    // Set connection_status 1
-    connection_status = 1;
     attr = (pthread_attr_t *)malloc(sizeof(pthread_attr_t));
     pthread_attr_setdetachstate(attr, PTHREAD_CREATE_DETACHED);
 
@@ -168,44 +192,26 @@ int main(int argc, char *argv[])
       perror("Cannot create check connection thread");
       exit(0);
     }
-    // sleep(5);
 #endif
 
-    pthread_mutex_init(&mutexQueue, NULL);
-
+    if (pthread_mutex_init(&mutexQueue, NULL) != 0)
+    {
+       perror("mutex init error");
+       exit(1);
+    }
     if (pthread_cond_init(&condQueue, NULL) != 0)
     {
         perror("pthread_cond_init() error");
         exit(1);
     }
+    
 
-    printf("Create thread pool of %d threads\n", MAX_THREAD);
-    for (i = 0; i < MAX_THREAD; i++)
-    {
-        redis_conn[i].th_id = i;
-        if (pthread_create(&redis_conn[i].t_conn, attr, t_redis_command, &redis_conn[i]) != 0)
-        {
-            printf("Error creating threads \n");
-            exit(0);
-        }
-        printf("Created thread(%d): %lu\n",i, redis_conn[i].t_conn);
-    }
-/*
-    for (i = 0; i < MAX_THREAD; i++)
-    {
-        if (pthread_join(redis_conn[i].t_conn, NULL) != 0)
-        {
-            printf("Error joining thread\n");
-            exit(0);
-        }
-    }
-*/
-    printf("Add job\n");
+    // printf("Add job\n");
     TAILQ_INIT(&head);
     for (i = 0; i < queue_num; i++)
     {
         add_to_queue(i);
-        usleep(2000000);
+        usleep(10000);
     }
 
     pthread_join(t_producer, NULL);

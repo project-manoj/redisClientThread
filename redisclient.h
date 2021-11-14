@@ -17,7 +17,8 @@ pthread_mutex_t mutexQueue;
 pthread_cond_t condQueue;
 pthread_attr_t *attr;
 
-#define CHECK_CONN(conn)    \
+#define CHECK_CONN(conn, ret)    \
+   ret = 0; \
    if (conn == NULL || conn->err) \
    {                              \
      if (conn)                    \
@@ -29,8 +30,7 @@ pthread_attr_t *attr;
      {                            \
        printf("Connection error: connection NULL\n"); \
      }                            \
-     printf("Exit\n"); pthread_exit(NULL);\
-   }
+     ret = -1;   }
 
 
 int connection_status;
@@ -45,4 +45,5 @@ typedef struct entry
     entries;
 } Q_ENTRY;
 
+void create_thread_pool(int);
 #endif
