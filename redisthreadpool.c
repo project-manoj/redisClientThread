@@ -56,7 +56,7 @@ void *t_redis_command(void *args)
     while(1)
     {
         pthread_mutex_lock(&mutexQueue);
-        if(TAILQ_EMPTY(&head))
+        while(TAILQ_EMPTY(&head) && connection_status == 1)
         {
           pthread_cond_wait(&condQueue, &mutexQueue);
         }
@@ -98,7 +98,7 @@ void *t_redis_command(void *args)
              printf("Exit thread\n");
              break; 
            }
-           usleep(100000);
+           usleep(300000);
            found = 0;
         }
     }
